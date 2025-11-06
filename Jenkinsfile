@@ -60,7 +60,6 @@ pipeline {
       post {
         always {
           junit allowEmptyResults: true, testResults: "flask/test-results.xml"
-          recordCoverage tools: [[parser: 'Cobertura', pattern: "flask/coverage.xml"]]
         }
       }
     }
