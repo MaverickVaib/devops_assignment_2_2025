@@ -118,10 +118,11 @@ pipeline {
           kubectl -n "$NS" rollout status deploy/ace-api --timeout=120s
 
           # Smoke test via NodePort
-          IP=$(minikube ip)
-          code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP:30080/api/health)
-          echo "Smoke test HTTP ${code}"
-          [ "$code" = "200" ] || { echo "Smoke failed"; kubectl -n "$NS" rollout undo deploy/ace-api; exit 1; }
+          NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+          code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health")
+          echo "Smoke HTTP $code"
+          [ "$code" = "200" ] || { kubectl -n "$NS" rollout undo deploy/ace-api; exit 1; }
+          
         '''
       }
 }
@@ -201,10 +202,10 @@ stage('Canary: 10% Traffic Smoke') {
       kubectl -n "$NS" scale deploy/ace-api-stable --replicas=9 || true
       kubectl -n "$NS" scale deploy/ace-api-canary --replicas=1 || true
 
-      IP=$(minikube ip)
-      code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP:30080/api/health)
-      echo "Canary smoke HTTP ${code}"
-      [ "$code" = "200" ]
+      NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+      code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health")
+      echo "Smoke HTTP $code"
+      [ "$code" = "200" ] || { kubectl -n "$NS" rollout undo deploy/ace-api; exit 1; }
     '''
   }
 }
