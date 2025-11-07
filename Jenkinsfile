@@ -1,8 +1,12 @@
-environment {
-  DOCKERHUB_USER = 'maverickvaib'
-}
+
 pipeline {
   agent any
+
+  environment {
+    KUBECONFIG    = '/var/lib/jenkins/.kube/config'
+    DOCKERHUB_USER = 'maverickvaib'
+    IMAGE_NAME     = 'aceest-fitness'
+  }
 
   options {
     timestamps()
@@ -90,13 +94,7 @@ pipeline {
                     docker push "${IMG_BASE}:${SHORT_SHA}"
                     docker push "${IMG_BASE}:latest"
 
-                    cat > .ci_env <<EOF
-                        export DOCKERHUB_USER="${DOCKERHUB_USER}"
-                        export IMAGE_NAME="aceest-fitness"
-                        export VERSION="$(tr -d '\r' < flask/version.txt)"
-                        export SHORT_SHA="$(git rev-parse --short HEAD)"
-                        export IMG_BASE="docker.io/${DOCKERHUB_USER}/aceest-fitness"
-                        EOF
+                    
 
                       '''
         }
@@ -107,7 +105,7 @@ pipeline {
       steps {
         sh '''
           set -e
-          . .ci_env
+
           NS=ace
           SHORT_SHA=$(git rev-parse --short HEAD)
 
@@ -135,7 +133,7 @@ pipeline {
   steps {
     sh '''
       set -e
-      . .ci_env
+
       NS=ace
       SHORT_SHA=$(git rev-parse --short HEAD)
       IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
@@ -152,7 +150,7 @@ stage('BG: Flip Service to Green + Smoke') {
   steps {
     sh '''
       set -e
-      . .ci_env
+      
       NS=ace
       IP=$(minikube ip)
 
@@ -180,7 +178,7 @@ stage('Canary: Deploy Stable + Canary') {
   steps {
     sh '''
       set -e
-      . .ci_env
+      
       NS=ace
       SHORT_SHA=$(git rev-parse --short HEAD)
       IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
@@ -200,7 +198,7 @@ stage('Canary: 10% Traffic Smoke') {
   steps {
     sh '''
       set -e
-      . .ci_env
+      
       NS=ace
       # give canary tiny weight (1 pod) vs stable (e.g., 9 pods) if you want real 10%
       kubectl -n "$NS" scale deploy/ace-api-stable --replicas=9 || true
@@ -218,7 +216,7 @@ stage('Canary: Promote to 100% or Rollback') {
   steps {
     sh '''
       set -e
-      . .ci_env
+      
       NS=ace
       PROMOTE=${PROMOTE:-yes}  # change via Jenkins parameter later if you want manual gate
       if [ "$PROMOTE" = "yes" ]; then
