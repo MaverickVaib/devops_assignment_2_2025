@@ -3,6 +3,7 @@ pipeline {
   agent any
 
   environment {
+    APP_DIR = 'flask'
     KUBECONFIG    = '/var/lib/jenkins/.kube/config'
     DOCKERHUB_USER = 'maverickvaib'
     IMAGE_NAME     = 'aceest-fitness'
@@ -11,10 +12,6 @@ pipeline {
   options {
     timestamps()
     ansiColor('xterm')
-  }
-
-  environment {
-    APP_DIR = 'flask'
   }
 
   stages {
