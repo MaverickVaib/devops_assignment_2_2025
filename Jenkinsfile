@@ -118,10 +118,25 @@ pipeline {
           kubectl -n "$NS" rollout status deploy/ace-api --timeout=120s
 
           # Smoke test via NodePort
+          # Try NodePort first
           NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-          code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health")
-          echo "Smoke HTTP $code"
-          [ "$code" = "200" ] || { kubectl -n "$NS" rollout undo deploy/ace-api; exit 1; }
+          code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health" || true)
+          echo "NodePort smoke HTTP $code"
+
+          if [ "$code" != "200" ]; then
+            echo "NodePort unreachable, using port-forward fallback…"
+            kubectl -n "$NS" port-forward svc/ace-api 18080:80 >/tmp/pf.log 2>&1 &
+            PF=$!; sleep 2
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/api/health || true)
+            kill $PF || true
+            echo "Fallback smoke HTTP $code"
+            if [ "$code" != "200" ]; then
+              echo "==== port-forward logs ===="; cat /tmp/pf.log || true
+              echo "Smoke failed, rolling back…"
+              kubectl -n "$NS" rollout undo deploy/ace-api
+              exit 1
+            fi
+          fi
           
         '''
       }
