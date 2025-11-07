@@ -74,11 +74,7 @@ pipeline {
           usernameVariable: 'DOCKERHUB_USER',
           passwordVariable: 'DOCKERHUB_PASSWORD')]) {
           sh '''
-            set -euo pipefail
-
-                    : "${DOCKERHUB_USER:?missing dockerhub username}"
-                    : "${DOCKERHUB_PASSWORD:?missing dockerhub password}"
-
+            set -e
                     IMAGE_NAME="aceest-fitness"
                     VERSION=$(tr -d '\\r' < flask/version.txt)
                     SHORT_SHA=$(git rev-parse --short HEAD)
