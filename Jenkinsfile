@@ -66,7 +66,7 @@ pipeline {
 
     stage('Build & Push Docker Image') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub',
+        withCredentials([usernamePassword(credentialsId: 'maverickvaib',
           usernameVariable: 'DOCKERHUB_USER',
           passwordVariable: 'DOCKERHUB_PASSWORD')]) {
           sh '''
