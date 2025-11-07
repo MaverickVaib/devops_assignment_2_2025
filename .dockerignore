@@ -1,0 +1,8 @@
+.flaskenv
+.env
+**/__pycache__/
+**/.pytest_cache/
+flask/.venv/
+build/
+.git/
+.gitignore

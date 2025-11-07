@@ -64,6 +64,32 @@ pipeline {
       }
     }
 
+    stage('Build & Push Docker Image') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub',
+          usernameVariable: 'DOCKERHUB_USER',
+          passwordVariable: 'DOCKERHUB_PASSWORD')]) {
+          sh '''
+            set -e
+            DH_USER="${DOCKERHUB_USER}"
+            IMAGE_NAME="aceest-fitness"
+            VERSION=$(tr -d '\\r' < flask/version.txt)
+            SHORT_SHA=$(git rev-parse --short HEAD)
+
+            docker build -t docker.io/$DH_USER/$IMAGE_NAME:$VERSION \
+                        -t docker.io/$DH_USER/$IMAGE_NAME:$SHORT_SHA \
+                        -t docker.io/$DH_USER/$IMAGE_NAME:latest .
+
+            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
+
+            docker push docker.io/$DH_USER/$IMAGE_NAME:$VERSION
+            docker push docker.io/$DH_USER/$IMAGE_NAME:$SHORT_SHA
+            docker push docker.io/$DH_USER/$IMAGE_NAME:latest
+          '''
+        }
+      }
+    }
+
     stage('Package Build Artifact') {
       steps {
         sh '''
