@@ -165,16 +165,27 @@ stage('BG: Flip Service to Green + Smoke') {
       set -e
       
       NS=ace
-      IP=$(minikube ip)
 
       # Flip selector to green
       kubectl -n "$NS" patch svc ace-api -p '{"spec":{"selector":{"app":"ace-api","track":"green"}}}'
+      kubectl -n "$NS" rollout status deploy/ace-api-green --timeout=180s
 
       # Smoke test
-      code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP:30080/api/health)
-      echo "Smoke after flip: HTTP ${code}"
+      NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+      code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health" || true)
+      echo "BG NodePort smoke HTTP $code"
+
       if [ "$code" != "200" ]; then
-        echo "Flip failed, rolling back to blue"
+        echo "NodePort unreachable, using port-forward fallback…"
+        kubectl -n "$NS" port-forward svc/ace-api 18080:80 >/tmp/pf.log 2>&1 &
+        PF=$!; sleep 2
+        code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/api/health || true)
+        kill $PF || true
+        echo "BG Fallback smoke HTTP $code"
+      fi
+
+      if [ "$code" != "200" ]; then
+        echo "BG smoke failed, reverting Service to blue…"
         kubectl -n "$NS" patch svc ace-api -p '{"spec":{"selector":{"app":"ace-api","track":"blue"}}}'
         exit 1
       fi
