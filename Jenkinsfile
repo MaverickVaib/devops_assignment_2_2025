@@ -1,3 +1,6 @@
+environment {
+  DOCKERHUB_USER = 'maverickvaib'
+}
 pipeline {
   agent any
 
@@ -66,26 +69,31 @@ pipeline {
 
     stage('Build & Push Docker Image') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'maverickvaib',
+        withCredentials([usernamePassword(
+          credentialsId: 'maverickvaib',
           usernameVariable: 'DOCKERHUB_USER',
           passwordVariable: 'DOCKERHUB_PASSWORD')]) {
           sh '''
-            set -e
-            DH_USER="${DOCKERHUB_USER}"
-            IMAGE_NAME="aceest-fitness"
-            VERSION=$(tr -d '\\r' < flask/version.txt)
-            SHORT_SHA=$(git rev-parse --short HEAD)
+            set -euo pipefail
 
-            docker build -t docker.io/$DH_USER/$IMAGE_NAME:$VERSION \
-                        -t docker.io/$DH_USER/$IMAGE_NAME:$SHORT_SHA \
-                        -t docker.io/$DH_USER/$IMAGE_NAME:latest .
+                    : "${DOCKERHUB_USER:?missing dockerhub username}"
+                    : "${DOCKERHUB_PASSWORD:?missing dockerhub password}"
 
-            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                    IMAGE_NAME="aceest-fitness"
+                    VERSION=$(tr -d '\\r' < flask/version.txt)
+                    SHORT_SHA=$(git rev-parse --short HEAD)
+                    IMG_BASE="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}"
 
-            docker push docker.io/$DH_USER/$IMAGE_NAME:$VERSION
-            docker push docker.io/$DH_USER/$IMAGE_NAME:$SHORT_SHA
-            docker push docker.io/$DH_USER/$IMAGE_NAME:latest
-          '''
+                    echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
+
+                    docker build -t "${IMG_BASE}:${VERSION}" \
+                                -t "${IMG_BASE}:${SHORT_SHA}" \
+                                -t "${IMG_BASE}:latest" .
+
+                    docker push "${IMG_BASE}:${VERSION}"
+                    docker push "${IMG_BASE}:${SHORT_SHA}"
+                    docker push "${IMG_BASE}:latest"
+                      '''
         }
       }
     }
