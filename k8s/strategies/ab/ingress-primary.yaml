@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ace-ab
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ace-ab.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ace-api-a
+                port: { number: 80 }

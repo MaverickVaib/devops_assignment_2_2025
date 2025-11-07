@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ace-api-primary
+  labels:
+    app: ace-api
+    tier: primary
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ace-api
+      tier: primary
+  template:
+    metadata:
+      labels:
+        app: ace-api
+        tier: primary
+    spec:
+      containers:
+      - name: web
+        image: docker.io/maverickvaib/aceest-fitness:1.0.0
+        ports:
+        - containerPort: 5000

@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ace-shadow
+  annotations:
+    nginx.ingress.kubernetes.io/mirror-target: "ace-api-shadow.ace.svc.cluster.local"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ace-shadow.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ace-api
+            port:
+              number: 80

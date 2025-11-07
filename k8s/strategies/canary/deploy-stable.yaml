@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ace-api-stable, labels: { app: ace-api, role: stable } }
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: ace-api, role: stable } }
+  template:
+    metadata: { labels: { app: ace-api, role: stable } }
+    spec:
+      containers:
+        - name: web
+          image: docker.io/maverickvaib/aceest-fitness:1.0.0
+          ports: [{ containerPort: 5000 }]
+          readinessProbe: { httpGet: { path: /api/health, port: 5000 }, initialDelaySeconds: 2, periodSeconds: 5 }

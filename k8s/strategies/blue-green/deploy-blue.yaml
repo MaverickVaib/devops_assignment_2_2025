@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ace-api-blue
+  labels: { app: ace-api, track: blue }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: ace-api, track: blue } }
+  template:
+    metadata: { labels: { app: ace-api, track: blue } }
+    spec:
+      containers:
+        - name: web
+          image: docker.io/maverickvaib/aceest-fitness:1.0.0
+          ports: [{ containerPort: 5000 }]
+          readinessProbe: { httpGet: { path: /api/health, port: 5000 }, initialDelaySeconds: 2, periodSeconds: 5 }
+          livenessProbe:  { httpGet: { path: /api/health, port: 5000 }, initialDelaySeconds: 5, periodSeconds: 10 }

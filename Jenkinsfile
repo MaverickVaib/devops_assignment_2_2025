@@ -90,6 +90,129 @@ pipeline {
       }
     }
 
+    stage('Deploy (Rolling)') {
+      steps {
+        sh '''
+          set -e
+          NS=ace
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
+
+          # Ensure base objects exist
+          kubectl -n "$NS" apply -f k8s/base/service.yaml
+          kubectl -n "$NS" apply -f k8s/base/deployment.yaml
+
+          # Roll to the new image
+          kubectl -n "$NS" set image deploy/ace-api web="$IMG"
+          kubectl -n "$NS" rollout status deploy/ace-api --timeout=120s
+
+          # Smoke test via NodePort
+          IP=$(minikube ip)
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP:30080/api/health)
+          echo "Smoke test HTTP ${code}"
+          [ "$code" = "200" ] || { echo "Smoke failed"; kubectl -n "$NS" rollout undo deploy/ace-api; exit 1; }
+        '''
+      }
+}
+
+    stage('BG: Deploy Green') {
+  steps {
+    sh '''
+      set -e
+      NS=ace
+      SHORT_SHA=$(git rev-parse --short HEAD)
+      IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
+
+      # Apply or update green deployment with current image
+      # Replace image inline to avoid maintaining many YAML copies
+      sed "s#image: .*#image: ${IMG}#g" k8s/strategies/blue-green/deploy-green.yaml | kubectl -n "$NS" apply -f -
+      kubectl -n "$NS" rollout status deploy/ace-api-green --timeout=120s
+    '''
+  }
+}
+
+stage('BG: Flip Service to Green + Smoke') {
+  steps {
+    sh '''
+      set -e
+      NS=ace
+      IP=$(minikube ip)
+
+      # Flip selector to green
+      kubectl -n "$NS" patch svc ace-api -p '{"spec":{"selector":{"app":"ace-api","track":"green"}}}'
+
+      # Smoke test
+      code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP:30080/api/health)
+      echo "Smoke after flip: HTTP ${code}"
+      if [ "$code" != "200" ]; then
+        echo "Flip failed, rolling back to blue"
+        kubectl -n "$NS" patch svc ace-api -p '{"spec":{"selector":{"app":"ace-api","track":"blue"}}}'
+        exit 1
+      fi
+    '''
+  }
+  post {
+    success {
+      echo 'Green is live.'
+    }
+  }
+}
+
+stage('Canary: Deploy Stable + Canary') {
+  steps {
+    sh '''
+      set -e
+      NS=ace
+      SHORT_SHA=$(git rev-parse --short HEAD)
+      IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
+
+      # Apply stable (old) and canary (new)
+      kubectl -n "$NS" apply -f k8s/strategies/canary/deploy-stable.yaml
+      sed "s#image: .*#image: ${IMG}#g" k8s/strategies/canary/deploy-canary.yaml | kubectl -n "$NS" apply -f -
+      kubectl -n "$NS" apply -f k8s/strategies/canary/service.yaml
+
+      kubectl -n "$NS" rollout status deploy/ace-api-stable --timeout=120s
+      kubectl -n "$NS" rollout status deploy/ace-api-canary --timeout=120s
+    '''
+  }
+}
+
+stage('Canary: 10% Traffic Smoke') {
+  steps {
+    sh '''
+      set -e
+      NS=ace
+      # give canary tiny weight (1 pod) vs stable (e.g., 9 pods) if you want real 10%
+      kubectl -n "$NS" scale deploy/ace-api-stable --replicas=9 || true
+      kubectl -n "$NS" scale deploy/ace-api-canary --replicas=1 || true
+
+      IP=$(minikube ip)
+      code=$(curl -s -o /dev/null -w "%{http_code}" http://$IP:30080/api/health)
+      echo "Canary smoke HTTP ${code}"
+      [ "$code" = "200" ]
+    '''
+  }
+}
+
+stage('Canary: Promote to 100% or Rollback') {
+  steps {
+    sh '''
+      set -e
+      NS=ace
+      PROMOTE=${PROMOTE:-yes}  # change via Jenkins parameter later if you want manual gate
+      if [ "$PROMOTE" = "yes" ]; then
+        echo "Promoting canary to 100%"
+        kubectl -n "$NS" scale deploy/ace-api-stable --replicas=0
+        kubectl -n "$NS" scale deploy/ace-api-canary --replicas=3
+      else
+        echo "Rolling back canary"
+        kubectl -n "$NS" scale deploy/ace-api-canary --replicas=0
+      fi
+    '''
+  }
+}
+
+
     stage('Package Build Artifact') {
       steps {
         sh '''

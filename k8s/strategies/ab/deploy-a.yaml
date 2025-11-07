@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ace-api-a
+  labels: { app: ace-api, variant: A }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: ace-api, variant: A } }
+  template:
+    metadata: { labels: { app: ace-api, variant: A } }
+    spec:
+      containers:
+        - name: web
+          image: docker.io/maverickvaib/aceest-fitness:1.0.0
+          ports: [{ containerPort: 5000 }]

@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ace-api-canary, labels: { app: ace-api, role: canary } }
+spec:
+  replicas: 1  # ~25% when stable has 3
+  selector: { matchLabels: { app: ace-api, role: canary } }
+  template:
+    metadata: { labels: { app: ace-api, role: canary } }
+    spec:
+      containers:
+        - name: web
+          image: docker.io/maverickvaib/aceest-fitness:latest
+          ports: [{ containerPort: 5000 }]
+          readinessProbe: { httpGet: { path: /api/health, port: 5000 }, initialDelaySeconds: 2, periodSeconds: 5 }

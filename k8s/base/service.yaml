@@ -1,0 +1,13 @@
+# k8s/base/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: ace-api
+spec:
+  type: NodePort
+  selector:
+    app: ace-api
+  ports:
+    - port: 80
+      targetPort: 5000
+      nodePort: 30080

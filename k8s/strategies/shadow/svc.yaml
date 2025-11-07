@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ace-api
+spec:
+  selector:
+    app: ace-api
+    tier: primary
+  ports:
+  - port: 80
+    targetPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ace-api-shadow
+spec:
+  selector:
+    app: ace-api
+    tier: shadow
+  ports:
+  - port: 80
+    targetPort: 5000
