@@ -100,6 +100,8 @@ pipeline {
           set -e
           NS=ace
           SHORT_SHA=$(git rev-parse --short HEAD)
+          
+          echo "Expecting: docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
           IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
 
           # Ensure base objects exist
