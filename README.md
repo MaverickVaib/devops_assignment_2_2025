@@ -12,4 +12,3 @@ flask run --reload
 ## Tests
 cd flask && pytest -q
 
-
