@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
 from pydantic import ValidationError
-
 from aceest_fitness.models.workout import WorkoutIn
 from aceest_fitness.services import workouts_service as svc
 
@@ -10,11 +9,25 @@ bp = Blueprint("workouts", __name__, url_prefix="/api/workouts")
 def add_workout():
     try:
         payload = request.get_json(force=True, silent=False) or {}
+
+        # Back-compat: tests send "workout" instead of "exercise"
+        if "exercise" not in payload and "workout" in payload:
+            payload["exercise"] = payload.pop("workout")
+
         w = WorkoutIn(**payload)
     except ValidationError as e:
-        return jsonify({"error": e.errors()}), 400
+        # Flatten pydantic errors into a simple, JSON-safe shape
+        errors = [
+            {
+                "loc": ".".join(str(p) for p in err.get("loc", [])),
+                "msg": err.get("msg", "invalid"),
+                "type": err.get("type", "error"),
+            }
+            for err in e.errors()
+        ]
+        return jsonify({"errors": errors}), 400
     except Exception:
-        return jsonify({"error": "invalid json"}), 400
+        return jsonify({"errors": [{"msg": "invalid json"}]}), 400
 
     added = svc.add_workout(w)
     return jsonify({"message": "added", "workout": added.model_dump()}), 201
