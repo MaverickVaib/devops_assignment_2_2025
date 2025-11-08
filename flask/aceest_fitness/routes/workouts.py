@@ -1,42 +1,29 @@
-from flask import Blueprint, request, jsonify
-from pydantic import BaseModel, Field, ValidationError
-from ..services.workouts_service import workouts_service
+from flask import Blueprint, jsonify, request
+from pydantic import ValidationError
 
-bp = Blueprint("workouts", __name__)
+from aceest_fitness.models.workout import WorkoutIn
+from aceest_fitness.services import workouts_service as svc
 
-class WorkoutIn(BaseModel):
-    workout: str = Field(min_length=1)
-    duration: int = Field(gt=0)
+bp = Blueprint("workouts", __name__, url_prefix="/api/workouts")
 
-@bp.post("")
+@bp.route("", methods=["POST"])
 def add_workout():
-    # mirrors add_workout in Tkinter: require workout + duration, duration must be number :contentReference[oaicite:2]{index=2}
     try:
-        data = WorkoutIn.model_validate_json(request.data)
+        payload = request.get_json(force=True, silent=False) or {}
+        w = WorkoutIn(**payload)
     except ValidationError as e:
-        return jsonify({"errors": e.errors()}), 400
+        return jsonify({"error": e.errors()}), 400
+    except Exception:
+        return jsonify({"error": "invalid json"}), 400
 
-    w = workouts_service.add(data.workout, data.duration)
-    return jsonify({
-        "message": "added",
-        "workout": {
-            "workout": w.workout,
-            "duration": w.duration,
-            "timestamp": w.timestamp.isoformat()
-        }
-    }), 201
+    added = svc.add_workout(w)
+    return jsonify({"message": "added", "workout": added.model_dump()}), 201
 
-@bp.get("")
+@bp.route("", methods=["GET"])
 def view_workouts():
-    # mirrors "View Workouts" list in the dialog :contentReference[oaicite:3]{index=3}
-    arr = workouts_service.list_all()
-    return jsonify([{
-        "workout": w.workout,
-        "duration": w.duration,
-        "timestamp": w.timestamp.isoformat()
-    } for w in arr])
+    return jsonify(svc.list_workouts()), 200
 
-@bp.get("/summary")
+@bp.route("/summary", methods=["GET"])
 def summary():
-    # simple total minutes like the legacy summary text :contentReference[oaicite:4]{index=4}
-    return jsonify({"total_minutes": workouts_service.total_minutes()})
+    minutes_by_cat, total, msg = svc.summary()
+    return jsonify({"minutes": minutes_by_cat, "total_minutes": total, "message": msg}), 200
