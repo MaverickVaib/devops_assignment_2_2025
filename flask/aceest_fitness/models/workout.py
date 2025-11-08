@@ -29,6 +29,12 @@ class WorkoutIn(BaseModel):
         if v not in VALID_CATEGORIES:
             raise ValueError(f"category must be one of {sorted(VALID_CATEGORIES)}")
         return v
+    
+    @bp.route("", methods=["GET"])
+    def view_workouts():
+        # return legacy-compatible flat array
+        return jsonify(svc.list_workouts_flat()), 200
+
 
 class WorkoutOut(BaseModel):
     category: str
