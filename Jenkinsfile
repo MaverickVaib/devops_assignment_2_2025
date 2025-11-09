@@ -139,9 +139,42 @@ stage('K8s: Ensure Minikube up') {
     '''
   }
 }
+stage('Deploy (Rolling)') {
+  when {
+    not {
+      anyOf {
+        environment name: 'DEPLOYMENT_STRATEGY', value: 'bluegreen'
+        environment name: 'DEPLOYMENT_STRATEGY', value: 'canary'
+        environment name: 'DEPLOYMENT_STRATEGY', value: 'shadow'
+      }
+    }
+  }
+  steps {
+    sh '''
+      set -e
+      export MINIKUBE_HOME="${WORKSPACE}/.minikube"
+
+      NS="ace"
+      SHORT_SHA=$(git rev-parse --short HEAD)
+      IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
+
+      # ensure namespace exists
+      minikube -p ace-mk kubectl -- get ns "$NS" || \
+        minikube -p ace-mk kubectl -- create ns "$NS"
+
+      # apply base manifests
+      minikube -p ace-mk kubectl -- -n "$NS" apply -f k8s/base
+
+      # set the new image
+      minikube -p ace-mk kubectl -- -n "$NS" set image deploy/ace-api web="$IMG"
+
+      # wait for rollout
+      minikube -p ace-mk kubectl -- -n "$NS" rollout status deploy/ace-api --timeout=180s
+    '''
+  }
+}
 
 
-    // Optional: BG / Canary / Shadow / A-B stages using minikube kubectl --
     stage('BG: Deploy Green') {
       when { expression { fileExists('k8s/strategies/bg/green.yaml') } }
       steps {
