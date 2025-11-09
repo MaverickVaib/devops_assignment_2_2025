@@ -106,7 +106,7 @@ pipeline {
 stage('K8s: Ensure Minikube up') {
   steps {
     sh '''
-      set -euo pipefail
+      set -eu
       export MINIKUBE_HOME="${MINIKUBE_HOME}"
       PROFILE="ace-mk"
 
