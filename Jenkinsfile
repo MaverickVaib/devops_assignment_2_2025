@@ -188,6 +188,9 @@ stage('K8s: Ensure Minikube up') {
           SHORT_SHA=$(git rev-parse --short HEAD)
           IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
 
+          minikube -p ace-mk kubectl -- get ns "${NS}" >/dev/null 2>&1 || \
+          minikube -p ace-mk kubectl -- create ns "${NS}"
+
           minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/canary/stable.yaml
           minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/canary/canary.yaml
           minikube -p ace-mk kubectl -- -n "${NS}" set image deploy/ace-api-canary web="${IMG}"
