@@ -103,71 +103,43 @@ pipeline {
   }
 }
 
+stage('K8s: Ensure Minikube up') {
+  steps {
+    sh '''
+      set -euo pipefail
+      export MINIKUBE_HOME="${MINIKUBE_HOME}"
+      PROFILE="ace-mk"
 
-    stage('K8s: Ensure Minikube up') {
-      steps {
-        sh '''
-          set -e
-          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+      # If a half-dead cluster exists, nuke it to avoid zombie API servers
+      minikube -p "$PROFILE" status >/dev/null 2>&1 || true
+      if ! minikube -p "$PROFILE" status >/dev/null 2>&1; then
+        echo "Starting minikube profile '$PROFILE' with Docker driver..."
+        # Use a stable Kubernetes, wait for all components, and give it time
+        minikube -p "$PROFILE" start \
+          --driver=docker \
+          --kubernetes-version=v1.30.0 \
+          --cpus=2 --memory=4096 --disk-size=10g \
+          --wait=all --wait-timeout=8m
+      else
+        echo "Minikube '$PROFILE' already running."
+      fi
 
-          command -v minikube >/dev/null || { echo "minikube not installed on agent"; exit 1; }
+      # Robust wait for apiserver readiness (no more 'connection refused')
+      for i in $(seq 1 60); do
+        if minikube -p "$PROFILE" kubectl -- get --raw='/readyz?verbose' >/dev/null 2>&1; then
+          echo "Kubernetes API is ready."
+          break
+        fi
+        echo "Waiting for apiserver... ($i/60)"; sleep 3
+      done
 
-          if ! minikube -p minikube status >/dev/null 2>&1; then
-            echo "Starting minikube with Docker driver..."
-            minikube -p minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=10g
-          else
-            echo "Minikube already running."
-          fi
+      # Basic sanity checks
+      minikube -p "$PROFILE" kubectl -- get nodes
+      minikube -p "$PROFILE" kubectl -- get ns
+    '''
+  }
+}
 
-          minikube -p minikube status
-        '''
-      }
-    }
-
-    stage('Deploy (Rolling)') {
-      steps {
-        sh '''
-          set -e
-          export MINIKUBE_HOME="${MINIKUBE_HOME}"
-
-          NS=ace
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
-
-          # ensure namespace
-          minikube -p minikube kubectl -- get ns "${NS}" >/dev/null 2>&1 || \
-            minikube -p minikube kubectl -- create ns "${NS}"
-
-          # base manifests
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/base/service.yaml
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/base/deployment.yaml
-
-          # set image
-          minikube -p minikube kubectl -- -n "${NS}" set image deploy/ace-api web="${IMG}"
-
-          # rollout wait
-          minikube -p minikube kubectl -- -n "${NS}" rollout status deploy/ace-api --timeout=180s
-
-          # Smoke
-          TYPE=$(minikube -p minikube kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.type}')
-          if echo "$TYPE" | grep -qi NodePort; then
-            NODE_IP=$(minikube -p minikube ip)
-            NODE_PORT=$(minikube -p minikube kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.ports[0].nodePort}')
-            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${NODE_IP}:${NODE_PORT}/api/health" || true)
-            echo "Smoke /api/health => ${code}"
-            test "${code}" = "200"
-          else
-            minikube -p minikube kubectl -- -n "${NS}" port-forward svc/ace-api 18080:80 >/tmp/pf.log 2>&1 &
-            PF_PID=$!
-            sleep 2
-            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/api/health" || true)
-            kill "${PF_PID}" || true
-            echo "Smoke /api/health => ${code}"
-            test "${code}" = "200"
-          fi
-        '''
-      }
-    }
 
     // Optional: BG / Canary / Shadow / A-B stages using minikube kubectl --
     stage('BG: Deploy Green') {
@@ -180,9 +152,9 @@ pipeline {
           SHORT_SHA=$(git rev-parse --short HEAD)
           IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
 
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/bg/green.yaml
-          minikube -p minikube kubectl -- -n "${NS}" set image deploy/ace-api-green web="${IMG}"
-          minikube -p minikube kubectl -- -n "${NS}" rollout status deploy/ace-api-green --timeout=180s
+          minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/bg/green.yaml
+          minikube -p ace-mk kubectl -- -n "${NS}" set image deploy/ace-api-green web="${IMG}"
+          minikube -p ace-mk kubectl -- -n "${NS}" rollout status deploy/ace-api-green --timeout=180s
         '''
       }
     }
@@ -195,10 +167,10 @@ pipeline {
           export MINIKUBE_HOME="${MINIKUBE_HOME}"
           NS=ace
 
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/bg/svc-green.yaml
+          minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/bg/svc-green.yaml
 
-          NODE_IP=$(minikube -p minikube ip)
-          NODE_PORT=$(minikube -p minikube kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.ports[0].nodePort}')
+          NODE_IP=$(minikube -p ace-mk ip)
+          NODE_PORT=$(minikube -p ace-mk kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.ports[0].nodePort}')
           code=$(curl -s -o /dev/null -w "%{http_code}" "http://${NODE_IP}:${NODE_PORT}/api/health" || true)
           echo "BG Smoke => ${code}"
           test "${code}" = "200"
@@ -216,10 +188,10 @@ pipeline {
           SHORT_SHA=$(git rev-parse --short HEAD)
           IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
 
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/canary/stable.yaml
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/canary/canary.yaml
-          minikube -p minikube kubectl -- -n "${NS}" set image deploy/ace-api-canary web="${IMG}"
-          minikube -p minikube kubectl -- -n "${NS}" rollout status deploy/ace-api-canary --timeout=180s
+          minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/canary/stable.yaml
+          minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/canary/canary.yaml
+          minikube -p ace-mk kubectl -- -n "${NS}" set image deploy/ace-api-canary web="${IMG}"
+          minikube -p ace-mk kubectl -- -n "${NS}" rollout status deploy/ace-api-canary --timeout=180s
         '''
       }
     }
@@ -232,7 +204,7 @@ pipeline {
           export MINIKUBE_HOME="${MINIKUBE_HOME}"
           NS=ace
 
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/shadow/ingress-shadow.yaml || true
+          minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/shadow/ingress-shadow.yaml || true
         '''
       }
     }
@@ -244,7 +216,7 @@ pipeline {
           set -e
           export MINIKUBE_HOME="${MINIKUBE_HOME}"
           NS=ace
-          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/ab/ingress-ab.yaml || true
+          minikube -p ace-mk kubectl -- -n "${NS}" apply -f k8s/strategies/ab/ingress-ab.yaml || true
         '''
       }
     }
