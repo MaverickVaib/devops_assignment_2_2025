@@ -76,13 +76,17 @@ pipeline {
       steps {
         withCredentials([usernamePassword(
           credentialsId: 'maverickvaib',               
-          usernameVariable: 'maverickvaib',
+          usernameVariable: 'DOCKERHUB_USER',
           passwordVariable: 'DOCKERHUB_PASSWORD'
         )]) {
           sh '''
             set -e
+            IMAGE_NAME="aceest-fitness"
             SHORT_SHA=$(git rev-parse --short HEAD)
             VERSION=$(tr -d '\\r' < flask/version.txt)
+            IMG_BASE="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}"
+
+            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
 
             docker build -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${VERSION} \
                          -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${SHORT_SHA} \
