@@ -73,34 +73,36 @@ pipeline {
     }
 
     stage('Build & Push Docker Image') {
-      steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'maverickvaib',               
-          usernameVariable: 'DOCKERHUB_USER',
-          passwordVariable: 'DOCKERHUB_PASSWORD'
-        )]) {
-          sh '''
-            set -e
-            IMAGE_NAME="aceest-fitness"
-            SHORT_SHA=$(git rev-parse --short HEAD)
-            VERSION=$(tr -d '\\r' < flask/version.txt)
-            IMG_BASE="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}"
+  steps {
+    withCredentials([usernamePassword(
+      credentialsId: 'maverickvaib',               
+      usernameVariable: 'DOCKERHUB_USER',
+      passwordVariable: 'DOCKERHUB_PASSWORD'
+    )]) {
+      sh '''
+        set -euo pipefail
 
-            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
+        IMAGE_NAME="aceest-fitness"
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        VERSION=$(tr -d '\\r' < flask/version.txt)
 
-            docker build -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${VERSION} \
-                         -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${SHORT_SHA} \
-                         -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:latest .
+        IMG_BASE="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}"
 
-            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER_CI" --password-stdin
+        echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
 
-            docker push docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${VERSION}
-            docker push docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${SHORT_SHA}
-            docker push docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:latest
-          '''
-        }
-      }
+        docker build \
+          -t "${IMG_BASE}:${VERSION}" \
+          -t "${IMG_BASE}:${SHORT_SHA}" \
+          -t "${IMG_BASE}:latest" .
+
+        docker push "${IMG_BASE}:${VERSION}"
+        docker push "${IMG_BASE}:${SHORT_SHA}"
+        docker push "${IMG_BASE}:latest"
+      '''
     }
+  }
+}
+
 
     stage('K8s: Ensure Minikube up') {
       steps {
