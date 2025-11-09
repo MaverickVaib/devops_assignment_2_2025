@@ -75,8 +75,8 @@ pipeline {
     stage('Build & Push Docker Image') {
       steps {
         withCredentials([usernamePassword(
-          credentialsId: 'dockerhub',               // << your Jenkins credentials ID
-          usernameVariable: 'DOCKERHUB_USER_CI',
+          credentialsId: 'maverickvaib',               
+          usernameVariable: 'maverickvaib',
           passwordVariable: 'DOCKERHUB_PASSWORD'
         )]) {
           sh '''
