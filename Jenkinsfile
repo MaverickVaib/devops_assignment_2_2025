@@ -80,7 +80,7 @@ pipeline {
       passwordVariable: 'DOCKERHUB_PASSWORD'
     )]) {
       sh '''
-        set -euo pipefail
+        set -e
 
         IMAGE_NAME="aceest-fitness"
         SHORT_SHA=$(git rev-parse --short HEAD)
