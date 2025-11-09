@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ace-api-canary
+  namespace: ace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ace-api
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: ace-api
+        track: canary
+    spec:
+      containers:
+        - name: web
+          image: docker.io/maverickvaib/aceest-fitness:latest   # will be overridden by Jenkins set image
+          ports:
+            - containerPort: 5000

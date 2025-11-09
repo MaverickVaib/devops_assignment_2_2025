@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ace-api-stable
+  namespace: ace
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ace-api
+      track: stable
+  template:
+    metadata:
+      labels:
+        app: ace-api
+        track: stable
+    spec:
+      containers:
+        - name: web
+          image: docker.io/maverickvaib/aceest-fitness:1.0.0   # placeholder; not changed by pipeline
+          ports:
+            - containerPort: 5000
