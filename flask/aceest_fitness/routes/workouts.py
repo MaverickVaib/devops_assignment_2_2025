@@ -32,7 +32,7 @@ def add_workout():
 
 @bp.route("", methods=["GET"])
 def view_workouts():
-    # legacy-compatible flat array with "workout" key
+    
     return jsonify(svc.list_workouts_flat()), 200
 
 @bp.route("/summary", methods=["GET"])
