@@ -1,20 +1,24 @@
-
 pipeline {
   agent any
-
-  environment {
-    APP_DIR = 'flask'
-    KUBECONFIG    = '/var/lib/jenkins/.kube/config'
-    DOCKERHUB_USER = 'maverickvaib'
-    IMAGE_NAME     = 'aceest-fitness'
-  }
 
   options {
     timestamps()
     ansiColor('xterm')
   }
 
+  triggers {
+    // pick one: either GitHub webhook or pollSCM. Leaving poll so it "just works".
+    pollSCM('@hourly')
+  }
+
+  environment {
+    DOCKERHUB_USER = 'maverickvaib'              // set your Docker Hub user
+    IMAGE_NAME     = 'aceest-fitness'
+    MINIKUBE_HOME  = "${env.WORKSPACE}/.minikube" // keep minikube data in workspace
+  }
+
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
@@ -24,12 +28,11 @@ pipeline {
 
     stage('Determine Version') {
       steps {
-        dir("${APP_DIR}") {
+        dir('flask') {
           script {
-            def ver = sh(returnStdout: true, script: "cat version.txt").trim()
-            env.APP_VERSION = ver
+            env.VERSION   = sh(returnStdout: true, script: "tr -d '\\r' < version.txt").trim()
             env.SHORT_SHA = sh(returnStdout: true, script: "git rev-parse --short HEAD").trim()
-            echo "Building version ${env.APP_VERSION} (${env.SHORT_SHA})"
+            echo "Building version ${env.VERSION} (${env.SHORT_SHA})"
           }
         }
       }
@@ -37,8 +40,9 @@ pipeline {
 
     stage('Set up Python & Install Deps') {
       steps {
-        dir("${APP_DIR}") {
+        dir('flask') {
           sh '''
+            set -e
             python3 -m venv .venv
             . .venv/bin/activate
             pip install -U pip
@@ -51,19 +55,19 @@ pipeline {
 
     stage('Unit Tests') {
       steps {
-        dir("${APP_DIR}") {
+        dir('flask') {
           sh '''
+            set -e
             . .venv/bin/activate
-            pytest --junitxml=test-results.xml \
-                   --cov=aceest_fitness \
-                   --cov-report=term-missing \
-                   --cov-report=xml:coverage.xml
+            pytest --junitxml=test-results.xml --cov=aceest_fitness --cov-report=term-missing --cov-report=xml:coverage.xml
           '''
         }
       }
       post {
         always {
-          junit allowEmptyResults: true, testResults: "flask/test-results.xml"
+          junit 'flask/test-results.xml'
+          // comment out if you don't have the coverage plugin installed
+          // recordCoverage(tools: [[parser: 'JACOCO', pattern: 'flask/coverage.xml']])
         }
       }
     }
@@ -71,30 +75,46 @@ pipeline {
     stage('Build & Push Docker Image') {
       steps {
         withCredentials([usernamePassword(
-          credentialsId: 'maverickvaib',
-          usernameVariable: 'DOCKERHUB_USER',
-          passwordVariable: 'DOCKERHUB_PASSWORD')]) {
+          credentialsId: 'dockerhub',               // << your Jenkins credentials ID
+          usernameVariable: 'DOCKERHUB_USER_CI',
+          passwordVariable: 'DOCKERHUB_PASSWORD'
+        )]) {
           sh '''
             set -e
-                    IMAGE_NAME="aceest-fitness"
-                    VERSION=$(tr -d '\\r' < flask/version.txt)
-                    SHORT_SHA=$(git rev-parse --short HEAD)
-                    IMG_BASE="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}"
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION=$(tr -d '\\r' < flask/version.txt)
 
-                    echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER" --password-stdin
+            docker build -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${VERSION} \
+                         -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${SHORT_SHA} \
+                         -t docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:latest .
 
-                    docker build -t "${IMG_BASE}:${VERSION}" \
-                                -t "${IMG_BASE}:${SHORT_SHA}" \
-                                -t "${IMG_BASE}:latest" .
+            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USER_CI" --password-stdin
 
-                    docker push "${IMG_BASE}:${VERSION}"
-                    docker push "${IMG_BASE}:${SHORT_SHA}"
-                    docker push "${IMG_BASE}:latest"
-
-                    
-
-                      '''
+            docker push docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${VERSION}
+            docker push docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:${SHORT_SHA}
+            docker push docker.io/${DOCKERHUB_USER_CI}/${IMAGE_NAME}:latest
+          '''
         }
+      }
+    }
+
+    stage('K8s: Ensure Minikube up') {
+      steps {
+        sh '''
+          set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+
+          command -v minikube >/dev/null || { echo "minikube not installed on agent"; exit 1; }
+
+          if ! minikube -p minikube status >/dev/null 2>&1; then
+            echo "Starting minikube with Docker driver..."
+            minikube -p minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=10g
+          else
+            echo "Minikube already running."
+          fi
+
+          minikube -p minikube status
+        '''
       }
     }
 
@@ -102,181 +122,134 @@ pipeline {
       steps {
         sh '''
           set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
 
           NS=ace
           SHORT_SHA=$(git rev-parse --short HEAD)
+          IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
 
-          echo "Expecting: docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
-          IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
+          # ensure namespace
+          minikube -p minikube kubectl -- get ns "${NS}" >/dev/null 2>&1 || \
+            minikube -p minikube kubectl -- create ns "${NS}"
 
-          # Ensure base objects exist
-          kubectl -n "$NS" apply -f k8s/base/service.yaml
-          kubectl -n "$NS" apply -f k8s/base/deployment.yaml
+          # base manifests
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/base/service.yaml
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/base/deployment.yaml
 
-          # Roll to the new image
-          kubectl -n "$NS" set image deploy/ace-api web="$IMG"
-          kubectl -n "$NS" rollout status deploy/ace-api --timeout=120s
+          # set image
+          minikube -p minikube kubectl -- -n "${NS}" set image deploy/ace-api web="${IMG}"
 
-          # Smoke test via NodePort
-          # Try NodePort first
-          NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-          code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health" || true)
-          echo "NodePort smoke HTTP $code"
+          # rollout wait
+          minikube -p minikube kubectl -- -n "${NS}" rollout status deploy/ace-api --timeout=180s
 
-          if [ "$code" != "200" ]; then
-            echo "NodePort unreachable, using port-forward fallback…"
-            kubectl -n "$NS" port-forward svc/ace-api 18080:80 >/tmp/pf.log 2>&1 &
-            PF=$!; sleep 2
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/api/health || true)
-            kill $PF || true
-            echo "Fallback smoke HTTP $code"
-            if [ "$code" != "200" ]; then
-              echo "==== port-forward logs ===="; cat /tmp/pf.log || true
-              echo "Smoke failed, rolling back…"
-              kubectl -n "$NS" rollout undo deploy/ace-api
-              exit 1
-            fi
+          # Smoke
+          TYPE=$(minikube -p minikube kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.type}')
+          if echo "$TYPE" | grep -qi NodePort; then
+            NODE_IP=$(minikube -p minikube ip)
+            NODE_PORT=$(minikube -p minikube kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.ports[0].nodePort}')
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${NODE_IP}:${NODE_PORT}/api/health" || true)
+            echo "Smoke /api/health => ${code}"
+            test "${code}" = "200"
+          else
+            minikube -p minikube kubectl -- -n "${NS}" port-forward svc/ace-api 18080:80 >/tmp/pf.log 2>&1 &
+            PF_PID=$!
+            sleep 2
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/api/health" || true)
+            kill "${PF_PID}" || true
+            echo "Smoke /api/health => ${code}"
+            test "${code}" = "200"
           fi
-          
         '''
       }
-}
-
-    stage('BG: Deploy Green') {
-  steps {
-    sh '''
-      set -e
-
-      NS=ace
-      SHORT_SHA=$(git rev-parse --short HEAD)
-      IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
-
-      # Apply or update green deployment with current image
-      # Replace image inline to avoid maintaining many YAML copies
-      sed "s#image: .*#image: ${IMG}#g" k8s/strategies/blue-green/deploy-green.yaml | kubectl -n "$NS" apply -f -
-      kubectl -n "$NS" rollout status deploy/ace-api-green --timeout=120s
-    '''
-  }
-}
-
-stage('BG: Flip Service to Green + Smoke') {
-  steps {
-    sh '''
-      set -e
-      
-      NS=ace
-
-      # Flip selector to green
-      kubectl -n "$NS" patch svc ace-api -p '{"spec":{"selector":{"app":"ace-api","track":"green"}}}'
-      kubectl -n "$NS" rollout status deploy/ace-api-green --timeout=180s
-
-      # Smoke test
-      NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-      code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health" || true)
-      echo "BG NodePort smoke HTTP $code"
-
-      if [ "$code" != "200" ]; then
-        echo "NodePort unreachable, using port-forward fallback…"
-        kubectl -n "$NS" port-forward svc/ace-api 18080:80 >/tmp/pf.log 2>&1 &
-        PF=$!; sleep 2
-        code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:18080/api/health || true)
-        kill $PF || true
-        echo "BG Fallback smoke HTTP $code"
-      fi
-
-      if [ "$code" != "200" ]; then
-        echo "BG smoke failed, reverting Service to blue…"
-        kubectl -n "$NS" patch svc ace-api -p '{"spec":{"selector":{"app":"ace-api","track":"blue"}}}'
-        exit 1
-      fi
-    '''
-  }
-  post {
-    success {
-      echo 'Green is live.'
     }
-  }
-}
 
-stage('Canary: Deploy Stable + Canary') {
-  steps {
-    sh '''
-      set -e
-      
-      NS=ace
-      SHORT_SHA=$(git rev-parse --short HEAD)
-      IMG="docker.io/${DOCKERHUB_USER}/aceest-fitness:${SHORT_SHA}"
-
-      # Apply stable (old) and canary (new)
-      kubectl -n "$NS" apply -f k8s/strategies/canary/deploy-stable.yaml
-      sed "s#image: .*#image: ${IMG}#g" k8s/strategies/canary/deploy-canary.yaml | kubectl -n "$NS" apply -f -
-      kubectl -n "$NS" apply -f k8s/strategies/canary/service.yaml
-
-      kubectl -n "$NS" rollout status deploy/ace-api-stable --timeout=120s
-      kubectl -n "$NS" rollout status deploy/ace-api-canary --timeout=120s
-    '''
-  }
-}
-
-stage('Canary: 10% Traffic Smoke') {
-  steps {
-    sh '''
-      set -e
-      
-      NS=ace
-      # give canary tiny weight (1 pod) vs stable (e.g., 9 pods) if you want real 10%
-      kubectl -n "$NS" scale deploy/ace-api-stable --replicas=9 || true
-      kubectl -n "$NS" scale deploy/ace-api-canary --replicas=1 || true
-
-      NODE_IP=$(kubectl get node -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-      code=$(curl -s -o /dev/null -w "%{http_code}" "http://$NODE_IP:30080/api/health")
-      echo "Smoke HTTP $code"
-      [ "$code" = "200" ] || { kubectl -n "$NS" rollout undo deploy/ace-api; exit 1; }
-    '''
-  }
-}
-
-stage('Canary: Promote to 100% or Rollback') {
-  steps {
-    sh '''
-      set -e
-      
-      NS=ace
-      PROMOTE=${PROMOTE:-yes}  # change via Jenkins parameter later if you want manual gate
-      if [ "$PROMOTE" = "yes" ]; then
-        echo "Promoting canary to 100%"
-        kubectl -n "$NS" scale deploy/ace-api-stable --replicas=0
-        kubectl -n "$NS" scale deploy/ace-api-canary --replicas=3
-      else
-        echo "Rolling back canary"
-        kubectl -n "$NS" scale deploy/ace-api-canary --replicas=0
-      fi
-    '''
-  }
-}
-
-
-    stage('Package Build Artifact') {
+    // Optional: BG / Canary / Shadow / A-B stages using minikube kubectl --
+    stage('BG: Deploy Green') {
+      when { expression { fileExists('k8s/strategies/bg/green.yaml') } }
       steps {
         sh '''
-          rm -rf build && mkdir -p build
-          zip -r build/aceest-fitness-${APP_VERSION}-${SHORT_SHA}.zip flask -x "flask/.venv/*" "flask/__pycache__/*" "flask/**/__pycache__/*" "flask/.pytest_cache/*"
+          set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+          NS=ace
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
+
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/bg/green.yaml
+          minikube -p minikube kubectl -- -n "${NS}" set image deploy/ace-api-green web="${IMG}"
+          minikube -p minikube kubectl -- -n "${NS}" rollout status deploy/ace-api-green --timeout=180s
         '''
-        archiveArtifacts artifacts: 'build/*.zip', fingerprint: true
+      }
+    }
+
+    stage('BG: Flip Service to Green + Smoke') {
+      when { expression { fileExists('k8s/strategies/bg/svc-green.yaml') } }
+      steps {
+        sh '''
+          set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+          NS=ace
+
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/bg/svc-green.yaml
+
+          NODE_IP=$(minikube -p minikube ip)
+          NODE_PORT=$(minikube -p minikube kubectl -- -n "${NS}" get svc ace-api -o jsonpath='{.spec.ports[0].nodePort}')
+          code=$(curl -s -o /dev/null -w "%{http_code}" "http://${NODE_IP}:${NODE_PORT}/api/health" || true)
+          echo "BG Smoke => ${code}"
+          test "${code}" = "200"
+        '''
+      }
+    }
+
+    stage('Canary: Deploy Stable + Canary') {
+      when { expression { fileExists('k8s/strategies/canary/') } }
+      steps {
+        sh '''
+          set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+          NS=ace
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMG="docker.io/${DOCKERHUB_USER}/${IMAGE_NAME}:${SHORT_SHA}"
+
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/canary/stable.yaml
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/canary/canary.yaml
+          minikube -p minikube kubectl -- -n "${NS}" set image deploy/ace-api-canary web="${IMG}"
+          minikube -p minikube kubectl -- -n "${NS}" rollout status deploy/ace-api-canary --timeout=180s
+        '''
+      }
+    }
+
+    stage('Shadow: Mirror Traffic') {
+      when { expression { fileExists('k8s/strategies/shadow/') } }
+      steps {
+        sh '''
+          set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+          NS=ace
+
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/shadow/ingress-shadow.yaml || true
+        '''
+      }
+    }
+
+    stage('A/B: Route Split') {
+      when { expression { fileExists('k8s/strategies/ab/') } }
+      steps {
+        sh '''
+          set -e
+          export MINIKUBE_HOME="${MINIKUBE_HOME}"
+          NS=ace
+          minikube -p minikube kubectl -- -n "${NS}" apply -f k8s/strategies/ab/ingress-ab.yaml || true
+        '''
       }
     }
   }
 
   post {
-    success {
-      echo "CI passed: ${env.APP_VERSION}-${env.SHORT_SHA}"
+    always {
+      sh 'rm -rf flask/.venv || true'
     }
     failure {
-      echo "CI failed. Fix tests or setup and push again."
-    }
-    always {
-      // tidy up local cache a bit
-      sh 'rm -rf flask/.venv || true'
+      echo 'CI failed. Fix tests or setup and push again.'
     }
   }
 }
