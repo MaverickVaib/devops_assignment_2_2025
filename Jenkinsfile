@@ -72,6 +72,29 @@ pipeline {
       }
     }
 
+    stage('SonarQube Analysis') {
+  steps {
+    withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+      withSonarQubeEnv('local-sonar') {
+        // Ensure reports exist (your test stage creates them)
+        sh '''
+          set -eu
+          test -f flask/coverage.xml
+          test -f flask/test-results.xml
+        '''
+        // Run scanner
+        sh '''
+          set -eu
+          sonar-scanner \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.token=$SONAR_TOKEN \
+            -Dsonar.projectBaseDir=$WORKSPACE
+        '''
+      }
+    }
+  }
+}
+
     stage('Build & Push Docker Image') {
   steps {
     withCredentials([usernamePassword(
